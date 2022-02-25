@@ -1,0 +1,212 @@
+#+title:  Journey through a GitHub bot in OCaml
+#+author: mattiasdrp
+#+date:   2022-02-14
+#+EMAIL:  5543639+mattiasdrp@users.noreply.github.com
+#+LANGUAGE:  en
+#+LINK_HOME: https://mattiasdrp.github.io/
+#+EXPORT_SELECT_TAGS: export
+#+EXPORT_EXCLUDE_TAGS: noexport
+#+OPTIONS: H:3 num:3 toc:t \n:nil @:t ::t |:t ^:{} _:{} *:t TeX:t LaTeX:t
+
+
+* About
+
+- This journey was made easier with the help of:
+  - [[https://github.com/coq/bot][coqbot]]
+  - [[https://docs.github.com/en/developers/apps/getting-started-with-apps/setting-up-your-development-environment-to-create-a-github-app][GitHub documentation for creating a first bot]]
+- The resulting bot is usubot
+- This article's purpose is to become a tutorial for those who would want to use bot-components
+
+
+* First step
+
+First things first, we need to make sure that we're able to receive messages from GitHub.
+
+Schematically, we want to do the following thing:
+
+#+CAPTION: Step1 schema
+#+NAME:   fig:step1_schema
+[[./img/step1_schema.pdf]]
+
+** [[https://smee.io/][smee.io]]
+
+- Start by creating a channel on [[https://smee.io/][smee.io]]
+- Install the smee client:
+  - ~npm install global smee-client~
+  - there are other way that you can find when you create your channel
+- Start forwarding any webhooks to your channel to your localhost
+  - ~smee -u https://smee.io/OHVrxtvcvfBMZGFD --path /event_handler --port 3000~
+- Don't stop the client or close the window, this will be helpful for the rest of this journey
+
+#+CAPTION: Forwarding smee channel to localhost on port 3000
+#+NAME:   fig:smee_localhost
+#+ATTR_HTML: :width 800px
+#+ATTR_ORG: :width 800px
+[[./img/step1_smee.png]]
+
+** Creating a github app
+
+1. Go on your [[https://github.com/settings/apps][apps settings page on github]] and click on create a [[https://github.com/settings/apps/new][New Github App]]
+2. Fill the Homepage URL with the url provided by smee:
+
+    #+CAPTION: Homepage URL
+    #+NAME:   fig:step1_home_url
+    [[./img/step1_home_url.png]]
+3. Fill the Webhook URL with the url provided by smee:
+
+    #+CAPTION: Webhook URL
+    #+NAME:   fig:step1_webhook_url
+    [[./img/step1_webhook_url.png]]
+4. Create a password to secure your webhook endpoints:
+
+     #+CAPTION: Webhook secret
+     #+NAME:   fig:step1_webhook_secret
+     [[./img/step1_webhook_secret.png]]
+5. Give your app the following permissions and subscribe to the following events (you can edit them whenever you want):
+
+     #+CAPTION: Webhook permissions
+     #+NAME:   fig:step1_webhook_permissions
+     [[./img/step1_webhook_permissions.png]]
+
+     #+CAPTION: Webhook events
+     #+NAME:   fig:step1_webhook_events
+     [[./img/step1_webhook_events.png]]
+6. Let the ~Only on this account~ checked and create your GitHub App
+7. You should be moved to the About page of your app where you'll need to store:
+   - The App ID
+   - Generate a client secret
+   - Generate a private key (that will be downloaded directly)
+
+#+begin_quote
+Important: Right now you could install your app but since nobody is listening to your opened port, nothing would happen. Let's fix it immediately
+#+end_quote
+
+** First bot in OCaml (receives and output what it received)
+
+1. Clone [[https://github.com/mattiasdrp/ocamlbot-tutorial][the tutorial repository]] or create a new directory with the following structure:
+   #+begin_src shell
+        step1
+        ├── bin
+        │   ├── dune
+        │   └── main.ml
+        └── dune-project
+   #+end_src
+
+   with:
+   - main.ml:
+     #+begin_src ocaml
+       open Lwt
+       open Cohttp
+       open Cohttp_lwt_unix
+
+       let server =
+         let callback _conn req body =
+           (* Get the URI *)
+           let uri = req |> Request.uri |> Uri.to_string in
+           (* Get the Request *)
+           let reqs = Request.uri req |> Uri.path in
+           (* Get the Method *)
+           let meth = req |> Request.meth |> Code.string_of_method in
+           (* Get the Headers *)
+           let headers = req |> Request.headers |> Header.to_string in
+           (* Get the body *)
+           Cohttp_lwt.Body.to_string body >>= fun bodys ->
+           Format.printf
+             "@[<v 0>URI: %s@,Req: %s@,Method: %s@,Headers: %s@,Body: %s@,@]@." uri
+             reqs meth headers bodys;
+           Server.respond_string ~status:`OK ~body:bodys ()
+         in
+         Server.create
+           ~mode:(`TCP (`Port 3000))
+           (Server.make ~callback () ~conn_closed:(fun _ ->
+                Format.eprintf "Connection closed@."))
+
+       let () = Lwt_main.run server
+     #+end_src
+
+   - dune:
+     #+begin_src shell
+       (executable
+        (package ocamlbot-step1)
+        (name main)
+        (public_name ocamlbot-step1)
+        (libraries cohttp-lwt-unix conduit-lwt)
+       )
+     #+end_src
+
+   - dune-project:
+     #+begin_src shell
+       (lang dune 2.8)
+
+       (generate_opam_files true)
+
+       (name ocamlbot-step1)
+       (version dev)
+       (authors "mattiasdrp")
+       (maintainers "mattiasdrp")
+       (source (github mattiasdrp/ocamlbot-tutorial))
+
+       (package
+        (name ocamlbot-step1)
+        (synopsis "OCamlbot, step1")
+        (description "\
+       First step for an OCaml bot, just read messages on localhost, port 3000")
+        (depends
+         (ocaml (>= 4.10))
+         (dune (>= 2.2))
+         (lwt (>= 5.3.0))
+         (cohttp-lwt (>= 2.5.4))
+         (cohttp-lwt-unix (>= 2.5.4))
+        )
+       )
+     #+end_src
+
+2. (optional) If you don't want to potentially spoil your global opam installation, ~opam switch create -y .~ and go grab a coffee
+3. Go to the =step1= directory if you cloned the project or in your directory if you did it manually
+4. ~opam install -y dune cohttp-lwt-unix conduit-lwt && dune build~
+5. ~dune exec ocamlbot-step1~ (don't stop it)
+
+** Installing your app
+
+
+1. Create an empty (private) repository
+2. Go to the Install App panel and click on install next to your account
+     #+CAPTION: Install App
+     #+NAME:   fig:step1_install_app
+     [[./img/step1_install_app.png]]
+3. Here you can select all your repositories or select some of them. Select the empty repository you just created
+4. If you did everything correctly:
+   - You should see that your smee tab in your terminal received someand received a ~200~ answer. HTTP Status 200 is ~OK~.
+   - If you look at your ocamlbot-step1 tab, you should see a lof of informations:
+     #+begin_src json
+       URI: //smee.io/event_handler
+       Req: /event_handler
+       Method: POST
+       Headers: host: smee.io
+       Accept-Encoding: gzip, deflate
+       content-type: application/json
+       [...]
+
+
+       Body: {
+         "action": "created",
+         "installation": { ... },
+         ...
+       }
+
+       Connection closed
+  #+end_src
+   - Your smee channel webpage should have a first event, "installation", that you can expand and which contains the same content as the one displayed by our simple bot
+
+
+Since we gave our app the right to send webhooks when an issue is created or commented, create an issue in your empty repo and comment it, two new events should appear (remember to never close the smee channel nor the ocamlbot program running).
+
+* Second step
+
+Remember our first schema:
+
+#+CAPTION: Step1 schema
+#+NAME:   fig:step1_schema
+[[./img/step1_schema.pdf]]
+
+Now, we would like to instead execute some actions on the issue that has been opened:
